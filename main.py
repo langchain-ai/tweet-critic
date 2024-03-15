@@ -177,63 +177,56 @@ def log_feedback(
                 for i, msg in enumerate(messages)
             )
 
-        if original_tweet and txt:
-            # Generate a new prompt. This is long.. 
-            optimizer_prompt = hub.pull(OPTIMIZER_PROMPT_NAME)
-            hub_client = HubClient()
-            list_response = hub_client.list_commits(PROMPT_NAME)
-            latest_commits = list_response["commits"][:3]
-            hashes = [commit["commit_hash"] for commit in latest_commits]
+        # Generate a new prompt. This is long..
+        optimizer_prompt = hub.pull(OPTIMIZER_PROMPT_NAME)
+        hub_client = HubClient()
+        list_response = hub_client.list_commits(PROMPT_NAME)
+        latest_commits = list_response["commits"][:3]
+        hashes = [commit["commit_hash"] for commit in latest_commits]
 
-            def pull_prompt(hash_):
-                return hub.pull(f"{PROMPT_NAME}:{hash_}")
+        def pull_prompt(hash_):
+            return hub.pull(f"{PROMPT_NAME}:{hash_}")
 
-            def get_prompt_template(prompt):
-                return cast(
-                    SystemMessagePromptTemplate, prompt.messages[0]
-                ).prompt.template
+        def get_prompt_template(prompt):
+            return cast(SystemMessagePromptTemplate, prompt.messages[0]).prompt.template
 
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                prompt_futures = [
-                    executor.submit(pull_prompt, hash_) for hash_ in hashes
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            prompt_futures = [executor.submit(pull_prompt, hash_) for hash_ in hashes]
+            updated_prompts = [future.result() for future in prompt_futures]
+        optimizer = (
+            optimizer_prompt | optimizer_llm | StrOutputParser() | parse_updated_prompt
+        ).with_config(run_name="Optimizer")
+        try:
+            conversation = format_conversation(
+                st.session_state.get("langchain_messages", [])
+            )
+            if score:
+                conversation = f'<rating>The conversation was rated as {value["score"]} by the user.</rating>\n\n{conversation}'
+            updated_sys_prompt = optimizer.invoke(
+                {
+                    "prompt_versions": "\n\n".join(
+                        [
+                            f"<prompt version={hash_}>\n{get_prompt_template(updated_prompt)}\n</prompt>"
+                            for hash_, updated_prompt in zip(hashes, updated_prompts)
+                        ]
+                    ),
+                    # current system prompt
+                    "current_prompt": get_prompt_template(prompt),
+                    "conversation": conversation,
+                    "final_value": txt,
+                }
+            )
+            updated_prompt = ChatPromptTemplate.from_messages(
+                [
+                    ("system", updated_sys_prompt),
+                    MessagesPlaceholder(variable_name="messages"),
                 ]
-                updated_prompts = [future.result() for future in prompt_futures]
-            optimizer = (
-                optimizer_prompt
-                | optimizer_llm
-                | StrOutputParser()
-                | parse_updated_prompt
-            ).with_config(run_name="Optimizer")
-            try:
-                updated_sys_prompt = optimizer.invoke(
-                    {
-                        "prompt_versions": "\n\n".join(
-                            [
-                                f"<prompt version={hash_}>\n{get_prompt_template(updated_prompt)}\n</prompt>"
-                                for hash_, updated_prompt in zip(
-                                    hashes, updated_prompts
-                                )
-                            ]
-                        ),
-                        # current system prompt
-                        "current_prompt": get_prompt_template(prompt),
-                        "conversation": format_conversation(
-                            st.session_state.get("langchain_messages", [])
-                        ),
-                        "final_value": txt,
-                    }
-                )
-                updated_prompt = ChatPromptTemplate.from_messages(
-                    [
-                        ("system", updated_sys_prompt),
-                        MessagesPlaceholder(variable_name="messages"),
-                    ]
-                )
-                hub.push(PROMPT_NAME, updated_prompt)
-                st.success("Bot updated successfully!")
-            except Exception as e:
-                logger.warning(f"Failed to update prompt: {e}")
-                pass
+            )
+            hub.push(PROMPT_NAME, updated_prompt)
+            st.success("Bot updated successfully!")
+        except Exception as e:
+            logger.warning(f"Failed to update prompt: {e}")
+            pass
 
 
 messages = st.session_state.get("langchain_messages", [])
@@ -272,18 +265,13 @@ if st.session_state.get("session_ended"):
         st.session_state.clear()
         st.rerun()
 else:
-    placeholder = (
-        "Paste your initial tweet."
-        if not messages
-        else (
-            "Provide feedback for the bot."
-        )
-    )
-    if prompt := st.chat_input(placeholder=placeholder):
-        st.chat_message("user").write(prompt)
-        original_tweet = prompt
-        messages.append(("user", prompt))
-        with st.chat_message("assistant", avatar="🦜"):
+    if not messages:
+        st.write("Paste your initial tweet in the text box below.")
+    if user_input := st.chat_input(placeholder="Write here..."):
+        st.chat_message("user").write(user_input)
+        original_tweet = user_input
+        messages.append(("user", user_input))
+        with st.chat_message("assistant"):
             write_stream = tweet_critic.stream(
                 {"messages": [tuple(msg[:2]) for msg in messages]},
                 config={"run_id": run_id},
