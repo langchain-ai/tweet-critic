@@ -18,6 +18,7 @@ from langchainhub import Client as HubClient
 import logging
 import concurrent.futures
 
+logging.basicConfig(level=logging.INFO)
 st.set_page_config(
     page_title="Prompt Optimization with Feedback",
     page_icon="🦜️️🛠️",
@@ -137,15 +138,22 @@ def log_feedback(
     st.write(
         "Thank you for your feedback! We are updating our bot based on your input."
     )
-    with st.spinner("Updating bot..."):
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = []
         score = {"👍": 1, "👎": 0}.get(value["score"]) or 0
         comment = value.get("text")
-        client.create_feedback_from_token(
-            presigned_url, score=int(score), comment=comment
+        futures.append(
+            executor.submit(
+                client.create_feedback_from_token,
+                presigned_url,
+                score=int(score),
+                comment=comment,
+            )
         )
 
-        if score and original_tweet and txt:
+        def create_example():
             # If the input/output pairs are provided, you can log them to a few-shot dataset.
+            logger.info(f"Creating example: {original_tweet} -> {txt}")
             try:
                 client.create_example(
                     inputs={"input": original_tweet},
@@ -162,43 +170,54 @@ def log_feedback(
                 )
                 st.write("Approved example saved successfully.")
 
-        def parse_updated_prompt(system_prompt_txt: str):
-            return (
-                system_prompt_txt.split("<improved_prompt>")[1]
-                .split("</improved_prompt>")[0]
-                .strip()
-            )
+        if score and original_tweet and txt:
+            logger.info("Saving example.")
+            futures.append(executor.submit(create_example))
+        else:
+            logger.info("Example not saved.")
+        with st.spinner("Updating bot's instructions..."):
 
-        def format_conversation(messages: list):
-            tmpl = """<turn idx={i}>
-        {role}: {txt}
-        </turn idx={i}>
-        """
-            return "\n".join(
-                tmpl.format(i=i, role=msg[0], txt=msg[1])
-                for i, msg in enumerate(messages)
-            )
+            def parse_updated_prompt(system_prompt_txt: str):
+                return (
+                    system_prompt_txt.split("<improved_prompt>")[1]
+                    .split("</improved_prompt>")[0]
+                    .strip()
+                )
 
-        # Generate a new prompt. This is long..
-        optimizer_prompt = hub.pull(OPTIMIZER_PROMPT_NAME)
-        hub_client = HubClient()
-        list_response = hub_client.list_commits(PROMPT_NAME)
-        latest_commits = list_response["commits"][:PROMPT_UPDATE_BATCHSIZE]
-        hashes = [commit["commit_hash"] for commit in latest_commits]
+            def format_conversation(messages: list):
+                tmpl = """<turn idx={i}>
+            {role}: {txt}
+            </turn idx={i}>
+            """
+                return "\n".join(
+                    tmpl.format(i=i, role=msg[0], txt=msg[1])
+                    for i, msg in enumerate(messages)
+                )
 
-        def pull_prompt(hash_):
-            return hub.pull(f"{PROMPT_NAME}:{hash_}")
+            # Generate a new prompt. This is long..
 
-        def get_prompt_template(prompt):
-            return cast(SystemMessagePromptTemplate, prompt.messages[0]).prompt.template
+            hub_client = HubClient()
 
-        with concurrent.futures.ThreadPoolExecutor() as executor:
+            def pull_prompt(hash_):
+                return hub.pull(f"{PROMPT_NAME}:{hash_}")
+
+            def get_prompt_template(prompt):
+                return cast(
+                    SystemMessagePromptTemplate, prompt.messages[0]
+                ).prompt.template
+
+            optimizer_prompt_future = executor.submit(hub.pull, OPTIMIZER_PROMPT_NAME)
+            list_response = hub_client.list_commits(PROMPT_NAME)
+            latest_commits = list_response["commits"][:PROMPT_UPDATE_BATCHSIZE]
+            hashes = [commit["commit_hash"] for commit in latest_commits]
             prompt_futures = [executor.submit(pull_prompt, hash_) for hash_ in hashes]
             updated_prompts = [future.result() for future in prompt_futures]
+            optimizer_prompt = optimizer_prompt_future.result()
         optimizer = (
             optimizer_prompt | optimizer_llm | StrOutputParser() | parse_updated_prompt
         ).with_config(run_name="Optimizer")
         try:
+            logger.info("Updating prompt.")
             conversation = format_conversation(
                 st.session_state.get("langchain_messages", [])
             )
@@ -229,6 +248,8 @@ def log_feedback(
         except Exception as e:
             logger.warning(f"Failed to update prompt: {e}")
             pass
+
+        concurrent.futures.wait(futures)
 
 
 messages = st.session_state.get("langchain_messages", [])
