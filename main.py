@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 DATASET_NAME = "Tweet Critic"
 PROMPT_NAME = "wfh/tweet-critic-fewshot"
 OPTIMIZER_PROMPT_NAME = "wfh/convo-optimizer"
+NUM_FEWSHOTS = 15
+PROMPT_UPDATE_BATCHSIZE = 5
 
 chat_llm = ChatAnthropic(model="claude-3-haiku-20240307", temperature=1)
 optimizer_llm = ChatAnthropic(model="claude-3-opus-20240229", temperature=1)
@@ -74,7 +76,7 @@ def few_shot_examples():
         examples = list(client.list_examples(dataset_name=DATASET_NAME))
         if not examples:
             return ""
-        examples = random.sample(examples, min(len(examples), 10))
+        examples = random.sample(examples, min(len(examples), NUM_FEWSHOTS))
         e_str = "\n".join([_format_example(e) for e in examples])
 
         return f"""
@@ -181,7 +183,7 @@ def log_feedback(
         optimizer_prompt = hub.pull(OPTIMIZER_PROMPT_NAME)
         hub_client = HubClient()
         list_response = hub_client.list_commits(PROMPT_NAME)
-        latest_commits = list_response["commits"][:3]
+        latest_commits = list_response["commits"][:PROMPT_UPDATE_BATCHSIZE]
         hashes = [commit["commit_hash"] for commit in latest_commits]
 
         def pull_prompt(hash_):
