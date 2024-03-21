@@ -2,4 +2,5 @@ langsmith>=0.1.26
 langchain_anthropic>=0.1.4
 langchain>=0.1.12
 langchainhub>=0.1.15
+langchain-core>=0.1.33
 slack_bolt
