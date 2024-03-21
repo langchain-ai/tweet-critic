@@ -33,8 +33,6 @@ OPTIMIZER_PROMPT_NAME = "wfh/convo-optimizer"
 NUM_FEWSHOTS = 15
 PROMPT_UPDATE_BATCHSIZE = 5
 
-chat_llm = ChatAnthropic(model="claude-3-haiku-20240307", temperature=1)
-optimizer_llm = ChatAnthropic(model="claude-3-opus-20240229", temperature=1)
 
 # Add a sidebar
 st.sidebar.title("Session Information")
@@ -56,6 +54,12 @@ st.sidebar.markdown(f"[See Prompt in Hub]({prompt_url})")
 optimizer_prompt_url = f"https://smith.langchain.com/hub/{OPTIMIZER_PROMPT_NAME}"
 st.sidebar.markdown(f"[See Optimizer Prompt in Hub]({optimizer_prompt_url})")
 
+chat_llm_model = st.sidebar.selectbox("Chat LLM Model", ["haiku", "opus"])
+if chat_llm_model == "haiku": 
+   chat_llm = ChatAnthropic(model=f"claude-3-{chat_llm_model}-20240307", temperature=1)
+else:
+   chat_llm = ChatAnthropic(model=f"claude-3-{chat_llm_model}-20240229", temperature=1) 
+optimizer_llm = ChatAnthropic(model="claude-3-opus-20240229", temperature=1)
 ## Get few-shot examples from 👍 examples
 client = Client()
 

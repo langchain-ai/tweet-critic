@@ -1,5 +1,11 @@
 # Tweet Critic
 
+<!-- markdown-link-check-disable -->
+[![GitHub](https://img.shields.io/badge/GitHub-Repository-blue?style=for-the-badge&logo=github)](https://github.com/langchain-ai/tweet-critic)
+
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://tweet-critic.streamlit.app/)
+<!-- markdown-link-check-enable -->
+
 Welcome to the tweet critic prompt optimization demo! This repository showcases a Streamlit application that demonstrates how to iteratively refine and optimize prompts based on user feedback and dialog.
 
 Have you ever found yourself having the _same_ conversation with ChatGPT, Claude, or similar application? It can often take many interactions to get get it to generate a useful response with the desired voice, tone and other characteristics. This demo shows how to make system updates based on user dialog to compile out this feedback so that subsequent interactions are less onerous.
@@ -8,6 +14,8 @@ It employs a two common optimization techniques:
 
 - Few-shot Learning: approved examples (those given a 👍) are added to a LangSmith few-shot prompt dataset and later dynamically injected in the chat bot's system prompt.
 - Prompt Optimization: When a 👍 or 👎 is provided, an "optimizer" prompt is used to propose updates to the chat bot to help it better satisfy this type of user request in the future. These updates are checked in the the [LangSmith Hub](https://smith.langchain.com/hub) so you can see the updates and roll back prompts if desired.
+
+![Demo](./img/demo.gif)
 
 ## Getting Started
 
