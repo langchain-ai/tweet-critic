@@ -88,7 +88,7 @@ few_shots = few_shot_examples()
 prompt: ChatPromptTemplate = hub.pull(PROMPT_NAME)
 prompt = prompt.partial(examples=few_shots)
 
-tweet_critic = (prompt | chat_llm | StrOutputParser()).with_config(run_name="Chat Bot")
+TWEET_CRITIC = (prompt | chat_llm | StrOutputParser()).with_config(run_name="Chat Bot")
 
 
 def parse_tweet(response: str):
@@ -147,9 +147,12 @@ def merge_consecutive_messages(messages: list) -> list:
     return result
 
 
-def handle_message(event, say, user_input, thread_ts):
-    logger.info("Handling message")
-    original_tweet = user_input
+def _get_messages(inputs_):
+    thread_ts, event, user_input = (
+        inputs_["thread_ts"],
+        inputs_["event"],
+        inputs_["user_input"],
+    )
     if thread_ts:
         channel = event["channel"]
         messages = get_thread_messages(channel, thread_ts)
@@ -162,8 +165,18 @@ def handle_message(event, say, user_input, thread_ts):
         "Respond ONLY by writing constructive criticism then "
         "writing a better tweet within <tweet></tweet> tags.",
     )
+    return {"messages": messages}
+
+
+def handle_message(event, say, user_input, thread_ts):
+    logger.info("Handling message")
+    original_tweet = user_input
+
     run_id = uuid.uuid4()
-    response = tweet_critic.invoke({"messages": messages}, {"run_id": run_id})
+    response = (_get_messages | TWEET_CRITIC).invoke(
+        {"thread_ts": thread_ts, "event": event, "user_input": user_input},
+        {"run_id": run_id},
+    )
     run_url = _get_run_url(client, str(run_id))
 
     pre, tweet, post = parse_tweet(response)
@@ -368,20 +381,6 @@ def get_thread_messages(channel, thread_ts):
     return merge_consecutive_messages(messages)
 
 
-@app.event({"type": "message", "subtype": "thread_broadcast"})
-def handle_thread_replies(event, say):
-    logger.info(f"Thread reply: {event}")
-    thread_ts = event["thread_ts"]
-    channel = event["channel"]
-    messages = get_thread_messages(channel, thread_ts)
-
-    # Process the user input and generate a response
-    response = tweet_critic.invoke({"messages": messages})
-
-    # Send the response in the thread
-    say(text=response, thread_ts=thread_ts)
-
-
 def _process_update(score: int, tweet: str, channel: str, thread_ts: str):
     messages = get_thread_messages(channel, thread_ts)
     original_tweet = messages[0][1]
@@ -479,26 +478,6 @@ def _process_update(score: int, tweet: str, channel: str, thread_ts: str):
             pass
 
         concurrent.futures.wait(futures)
-
-
-@app.event("reaction_added")
-def handle_reaction(body, ack, say):
-    ack()
-    logger.info(f"Reaction added: {body}")
-    event = body["event"]
-    if "reaction" not in event:
-        logger.error(f"Reaction not in body: {body.keys()}")
-        return
-    logger.info("Showing reaction")
-    reaction = event["reaction"]
-    tweet = body["message"]["metadata"]["tweet"]
-    channel = body["item"]["channel"]
-    thread_ts = body["item"]["ts"]
-
-    if reaction in ["thumbsup", "thumbsdown"]:
-        ack()
-        score = 1 if reaction == "thumbsup" else 0
-        _process_update(score, tweet, channel, thread_ts)
 
 
 if __name__ == "__main__":
